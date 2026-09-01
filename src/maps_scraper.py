@@ -78,26 +78,35 @@ class GoogleMapsScraper:
         return CAPTCHASONIC_EXT_PATH if os.path.isdir(CAPTCHASONIC_EXT_PATH) else None
 
     async def _dismiss_consent(self, page: Page):
-        """Bypass and dismiss Google cookie / consent dialogs if displayed."""
+        """Bypass and dismiss Google cookie / consent dialogs across all international regions."""
         consent_selectors = [
-            'button[aria-label*="Accept all"]',
-            'button[aria-label*="Reject all"]',
+            'button[aria-label*="Accept all" i]',
+            'button[aria-label*="Reject all" i]',
             'button:has-text("Accept all")',
+            'button:has-text("Reject all")',
             'button:has-text("I agree")',
             'button:has-text("Agree")',
             'button:has-text("Tout accepter")',
             'button:has-text("Alle akzeptieren")',
+            'button:has-text("Aceitar tudo")',
+            'button:has-text("Aceptar todo")',
+            'button:has-text("Accetta tutto")',
             'form[action*="consent"] button',
+            'button[jsname="b3VHJd"]',
+            'button[jsname="tWT92d"]',
+            'button[jsname="V67oIf"]',
+            'button[jsname="j6LnO"]',
         ]
-        for sel in consent_selectors:
-            try:
-                btn = page.locator(sel).first
-                if await btn.is_visible(timeout=1500):
-                    await btn.click()
-                    await page.wait_for_timeout(1000)
-                    break
-            except Exception:
-                pass
+        for _ in range(2):
+            for sel in consent_selectors:
+                try:
+                    btn = page.locator(sel).first
+                    if await btn.is_visible(timeout=1000):
+                        await btn.click()
+                        await page.wait_for_timeout(1500)
+                        return
+                except Exception:
+                    pass
 
     async def _handle_captcha_if_present(
         self,
@@ -406,7 +415,7 @@ class GoogleMapsScraper:
                             link_el = card
                         else:
                             link_el = card.locator('a[href*="/maps/place/"]').first
-                            if not await link_el.is_visible(timeout=200):
+                            if await link_el.count() == 0:
                                 continue
 
                         href = await link_el.get_attribute("href") or ""
@@ -456,7 +465,7 @@ class GoogleMapsScraper:
                             card_text = await card.inner_text()
                             review_count = parse_review_count(card_text)
 
-                        # Create lead immediately with card metadata
+                        # Create lead with card metadata
                         lead = BusinessLead(
                             name=name,
                             rating=rating,
@@ -473,10 +482,93 @@ class GoogleMapsScraper:
                         if await card_web.count() > 0 and await card_web.is_visible(timeout=50):
                             lead.website = await card_web.get_attribute("href")
 
-                        # Append to leads right away so leads are NEVER lost
+                        # Deep detail extraction: click card to open side panel in-place
+                        try:
+                            await card.scroll_into_view_if_needed()
+                            await link_el.click(force=True, timeout=2500)
+
+                            # Wait for panel to attach
+                            try:
+                                await page.locator('div[role="main"]').first.wait_for(state="attached", timeout=2500)
+                            except Exception:
+                                pass
+                            
+                            # Fast poll up to 1.6s for side panel elements to render
+                            phone_found = None
+                            for _ in range(8):
+                                await page.wait_for_timeout(200)
+                                # 1. Phone number buttons
+                                if not phone_found:
+                                    phone_btns = await page.locator('button[data-item-id^="phone:"], button[aria-label*="Phone:"], button[aria-label*="phone" i], a[href^="tel:"]').all()
+                                    for pb in phone_btns:
+                                        raw_p = (await pb.get_attribute("aria-label")) or (await pb.inner_text()) or ""
+                                        cleaned_p = raw_p.replace("Phone: ", "").replace("", "").replace("Phone", "").strip()
+                                        cand = clean_phone(cleaned_p)
+                                        if cand:
+                                            phone_found = cand
+                                            lead.phone = phone_found
+                                            break
+
+                                # 2. Website button
+                                if not lead.website:
+                                    web_el = page.locator('a[data-item-id="authority"], a[aria-label*="Website:"]').first
+                                    if await web_el.count() > 0 and await web_el.is_visible(timeout=100):
+                                        w_href = await web_el.get_attribute("href")
+                                        cleaned_w = clean_url(w_href)
+                                        if cleaned_w:
+                                            # Check if social link or actual website
+                                            is_social = False
+                                            for platform, domains in SOCIAL_DOMAINS.items():
+                                                if any(d in cleaned_w.lower() for d in domains):
+                                                    setattr(lead, platform, cleaned_w)
+                                                    is_social = True
+                                                    break
+                                            if not is_social:
+                                                lead.website = cleaned_w
+
+                                if phone_found and lead.website:
+                                    break
+
+                            # Fallback phone pattern match on panel text
+                            if not phone_found:
+                                try:
+                                    panel_main = page.locator('div[role="main"]').first
+                                    if await panel_main.count() > 0:
+                                        p_text = await panel_main.inner_text()
+                                        m = re.search(r"(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4,6}", p_text)
+                                        if m:
+                                            cand = clean_phone(m.group(0))
+                                            if cand and len(re.sub(r'\D', '', cand)) >= 8:
+                                                lead.phone = cand
+                                except Exception:
+                                    pass
+
+                            # 3. Category from panel
+                            cat_el = page.locator('button[jsaction*="category"], button.DkEaL').first
+                            if await cat_el.count() > 0:
+                                lead.category = (await cat_el.inner_text()).strip()
+
+                            # 4. Address from panel
+                            addr_el = page.locator('button[data-item-id="address"], button[aria-label*="Address:"]').first
+                            if await addr_el.count() > 0:
+                                raw_addr = (await addr_el.get_attribute("aria-label")) or (await addr_el.inner_text()) or ""
+                                addr_text = raw_addr.replace("Address: ", "").replace("", "").strip()
+                                if addr_text:
+                                    lead.address = addr_text
+                                    comp = parse_address_components(addr_text)
+                                    lead.street = comp.get("street")
+                                    lead.city = comp.get("city")
+                                    lead.state = comp.get("state")
+                                    lead.postal_code = comp.get("postal_code")
+                                    lead.country = comp.get("country")
+
+                        except Exception:
+                            pass
+
+                        # Append to leads with complete details
                         leads.append(lead)
 
-                        # Fire live telemetry callback immediately upon card discovery
+                        # Fire live telemetry callback immediately with full lead data (including phone)
                         if lead_callback:
                             try:
                                 if asyncio.iscoroutinefunction(lead_callback):
@@ -490,22 +582,6 @@ class GoogleMapsScraper:
                             break
                     except Exception:
                         continue
-
-                # Phase 2: High-fidelity deep detail extraction by navigating place pages
-                # Snappy 6s timeout so a single slow place page never blocks the pipeline
-                detail_page = await context.new_page()
-                detail_page.set_default_timeout(6000)
-
-                for lead in leads:
-                    try:
-                        await detail_page.goto(lead.google_maps_url, wait_until="domcontentloaded", timeout=6000)
-                        await self._handle_captcha_if_present(detail_page)
-                        await detail_page.wait_for_timeout(min(int(self.delay * 500), 500))
-                        await self._extract_place_page_details(detail_page, lead)
-                    except Exception:
-                        pass
-
-                await detail_page.close()
 
             except Exception:
                 pass

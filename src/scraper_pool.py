@@ -133,15 +133,22 @@ class ScraperPool:
                         except Exception:
                             pass
 
-                leads = await scraper.scrape_query(
-                    query=query,
-                    limit=limit,
-                    lead_callback=on_lead,
-                )
-                # scrape_query returns deduped list — merge any missed ones
-                for lead in leads:
-                    if lead not in result.leads:
-                        result.leads.append(lead)
+                try:
+                    leads = await asyncio.wait_for(
+                        scraper.scrape_query(
+                            query=query,
+                            limit=limit,
+                            lead_callback=on_lead,
+                        ),
+                        timeout=50.0,
+                    )
+                    # scrape_query returns deduped list — merge any missed ones
+                    for lead in leads:
+                        if lead not in result.leads:
+                            result.leads.append(lead)
+                except asyncio.TimeoutError:
+                    if not result.leads:
+                        result.error = "Worker watchdog: query timed out after 50s"
 
             except Exception as e:
                 result.error = str(e)
