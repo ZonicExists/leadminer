@@ -24,6 +24,8 @@ from src.utils import (
     filter_leads,
     load_saved_proxy_config,
     save_proxy_config,
+    load_saved_sidebar_config,
+    save_sidebar_config,
     parse_proxy_string,
 )
 from src.geo_expander import generate_sub_queries
@@ -818,6 +820,49 @@ def main():
 </div>
 """, unsafe_allow_html=True)
 
+        # Load persistent sidebar state
+        if "sidebar_config_loaded" not in st.session_state:
+            saved_cfg = load_saved_sidebar_config()
+            st.session_state.cfg_threads = int(saved_cfg.get("threads", 3))
+            st.session_state.cfg_limit = int(saved_cfg.get("limit", 15))
+            st.session_state.cfg_delay = float(saved_cfg.get("delay", 1.0))
+            st.session_state.cfg_enrich = bool(saved_cfg.get("enrich", True))
+            st.session_state.cfg_concurrency = int(saved_cfg.get("concurrency", 10))
+            st.session_state.cfg_headless = bool(saved_cfg.get("headless", True))
+            st.session_state.cfg_use_solver = bool(saved_cfg.get("use_solver", False))
+            st.session_state.cfg_solver_ext = str(saved_cfg.get("solver_ext", "captchasonic"))
+            st.session_state.cfg_proxy_mode = str(saved_cfg.get("proxy_mode", "Direct IP"))
+            st.session_state.cfg_single_proxy = str(saved_cfg.get("single_proxy", ""))
+            st.session_state.cfg_rotating_proxies = str(saved_cfg.get("rotating_proxies", ""))
+            st.session_state.cfg_proxy_file_path = str(saved_cfg.get("proxy_file_path", ""))
+            st.session_state.cfg_enable_ai = bool(saved_cfg.get("enable_ai", True))
+            st.session_state.cfg_ollama_endpoint = str(saved_cfg.get("ollama_endpoint", DEFAULT_OLLAMA_ENDPOINT))
+            st.session_state.cfg_ollama_model = str(saved_cfg.get("ollama_model", DEFAULT_OLLAMA_MODEL))
+            st.session_state.cfg_ai_filter_junk = bool(saved_cfg.get("ai_filter_junk", True))
+            st.session_state.cfg_ai_concurrency = int(saved_cfg.get("ai_concurrency", 3))
+            st.session_state.sidebar_config_loaded = True
+
+        def _persist_sidebar():
+            save_sidebar_config({
+                "threads": st.session_state.cfg_threads,
+                "limit": st.session_state.cfg_limit,
+                "delay": st.session_state.cfg_delay,
+                "enrich": st.session_state.cfg_enrich,
+                "concurrency": st.session_state.cfg_concurrency,
+                "headless": st.session_state.cfg_headless,
+                "use_solver": st.session_state.cfg_use_solver,
+                "solver_ext": st.session_state.cfg_solver_ext,
+                "proxy_mode": st.session_state.cfg_proxy_mode,
+                "single_proxy": st.session_state.cfg_single_proxy,
+                "rotating_proxies": st.session_state.cfg_rotating_proxies,
+                "proxy_file_path": st.session_state.cfg_proxy_file_path,
+                "enable_ai": st.session_state.cfg_enable_ai,
+                "ollama_endpoint": st.session_state.cfg_ollama_endpoint,
+                "ollama_model": st.session_state.cfg_ollama_model,
+                "ai_filter_junk": st.session_state.cfg_ai_filter_junk,
+                "ai_concurrency": st.session_state.cfg_ai_concurrency,
+            })
+
         # Card 1: Workers & Concurrency
         with st.container(border=True):
             st.markdown("""
@@ -826,10 +871,16 @@ def main():
   <span style="font-size:0.62rem;background:rgba(99,102,241,0.15);color:#818cf8;padding:1px 5px;border-radius:4px;font-family:'JetBrains Mono',monospace;">PARALLEL</span>
 </div>
 """, unsafe_allow_html=True)
-            threads = st.slider("Workers (Threads)", 1, 10, 3,
+            threads = st.slider("Workers (Threads)", 1, 10, value=st.session_state.cfg_threads,
                                 help="Concurrent browser processes running simultaneously.")
-            limit   = st.slider("Leads per Query", 1, 100, 15)
-            delay   = st.slider("Action Delay (s)", 0.5, 3.0, 1.0, 0.1)
+            limit   = st.slider("Leads per Query", 1, 100, value=st.session_state.cfg_limit)
+            delay   = st.slider("Action Delay (s)", 0.5, 3.0, value=st.session_state.cfg_delay, step=0.1)
+
+            if threads != st.session_state.cfg_threads or limit != st.session_state.cfg_limit or delay != st.session_state.cfg_delay:
+                st.session_state.cfg_threads = threads
+                st.session_state.cfg_limit = limit
+                st.session_state.cfg_delay = delay
+                _persist_sidebar()
 
         # Card 2: Website Enrichment
         with st.container(border=True):
@@ -839,12 +890,18 @@ def main():
   <span style="font-size:0.62rem;background:rgba(99,102,241,0.15);color:#818cf8;padding:1px 5px;border-radius:4px;font-family:'JetBrains Mono',monospace;">CONTACTS</span>
 </div>
 """, unsafe_allow_html=True)
-            enrich = st.toggle("Enrich Website Contacts", value=True)
+            enrich = st.toggle("Enrich Website Contacts", value=st.session_state.cfg_enrich)
             if enrich:
-                concurrency = st.slider("Enrichment Threads", 1, 30, 10)
+                concurrency = st.slider("Enrichment Threads", 1, 30, value=st.session_state.cfg_concurrency)
             else:
                 concurrency = 10
-            headless = st.toggle("Headless Stealth Mode", value=True)
+            headless = st.toggle("Headless Stealth Mode", value=st.session_state.cfg_headless)
+
+            if enrich != st.session_state.cfg_enrich or concurrency != st.session_state.cfg_concurrency or headless != st.session_state.cfg_headless:
+                st.session_state.cfg_enrich = enrich
+                st.session_state.cfg_concurrency = concurrency
+                st.session_state.cfg_headless = headless
+                _persist_sidebar()
 
         # Card 3: Captcha Solver
         with st.container(border=True):
@@ -854,27 +911,24 @@ def main():
   <span style="font-size:0.62rem;background:rgba(99,102,241,0.15);color:#818cf8;padding:1px 5px;border-radius:4px;font-family:'JetBrains Mono',monospace;">AUTO</span>
 </div>
 """, unsafe_allow_html=True)
-            use_solver = st.toggle("Auto-Solve CAPTCHAs", value=False,
+            use_solver = st.toggle("Auto-Solve CAPTCHAs", value=st.session_state.cfg_use_solver,
                                    help="Injects Bit Solver extension into each worker browser.")
             if use_solver:
                 solver_ext = st.segmented_control(
                     "Solver Extension",
                     options=["captchasonic", "nopecha"],
-                    default="captchasonic",
+                    default=st.session_state.cfg_solver_ext if st.session_state.cfg_solver_ext in ["captchasonic", "nopecha"] else "captchasonic",
                     label_visibility="collapsed",
                 )
             else:
                 solver_ext = "captchasonic"
 
-        # Card 4: Rotating Proxies (Persisted across sessions/restarts)
-        if "proxy_config_loaded" not in st.session_state:
-            saved_p_cfg = load_saved_proxy_config()
-            st.session_state.proxy_mode = saved_p_cfg.get("mode", "Direct IP")
-            st.session_state.single_proxy = saved_p_cfg.get("single_proxy", "")
-            st.session_state.rotating_proxies = saved_p_cfg.get("rotating_proxies", "")
-            st.session_state.proxy_file_path = saved_p_cfg.get("proxy_file_path", "")
-            st.session_state.proxy_config_loaded = True
+            if use_solver != st.session_state.cfg_use_solver or solver_ext != st.session_state.cfg_solver_ext:
+                st.session_state.cfg_use_solver = use_solver
+                st.session_state.cfg_solver_ext = solver_ext
+                _persist_sidebar()
 
+        # Card 4: Rotating Proxies
         with st.container(border=True):
             st.markdown("""
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
@@ -885,37 +939,27 @@ def main():
             proxy_mode = st.segmented_control(
                 "Proxy Source",
                 options=["Direct IP", "Single Proxy", "Rotating Pool"],
-                default=st.session_state.proxy_mode,
+                default=st.session_state.cfg_proxy_mode if st.session_state.cfg_proxy_mode in ["Direct IP", "Single Proxy", "Rotating Pool"] else "Direct IP",
                 label_visibility="collapsed",
             )
             if not proxy_mode:
                 proxy_mode = "Direct IP"
 
-            if proxy_mode != st.session_state.proxy_mode:
-                st.session_state.proxy_mode = proxy_mode
-                save_proxy_config(
-                    mode=proxy_mode,
-                    single_proxy=st.session_state.single_proxy,
-                    rotating_proxies=st.session_state.rotating_proxies,
-                    proxy_file_path=st.session_state.proxy_file_path,
-                )
+            if proxy_mode != st.session_state.cfg_proxy_mode:
+                st.session_state.cfg_proxy_mode = proxy_mode
+                _persist_sidebar()
 
             proxy_list: List[str] = []
             if proxy_mode == "Single Proxy":
                 single = st.text_input(
                     "Proxy URL",
-                    value=st.session_state.single_proxy,
+                    value=st.session_state.cfg_single_proxy,
                     placeholder="host:port:username:password",
                     label_visibility="collapsed",
                 )
-                if single != st.session_state.single_proxy:
-                    st.session_state.single_proxy = single
-                    save_proxy_config(
-                        mode=proxy_mode,
-                        single_proxy=single,
-                        rotating_proxies=st.session_state.rotating_proxies,
-                        proxy_file_path=st.session_state.proxy_file_path,
-                    )
+                if single != st.session_state.cfg_single_proxy:
+                    st.session_state.cfg_single_proxy = single
+                    _persist_sidebar()
 
                 if single.strip():
                     proxy_list = [single.strip()]
@@ -928,33 +972,23 @@ def main():
             elif proxy_mode == "Rotating Pool":
                 proxy_text = st.text_area(
                     "Proxies",
-                    value=st.session_state.rotating_proxies,
+                    value=st.session_state.cfg_rotating_proxies,
                     height=80,
                     placeholder="rp.scrapegw.com:6060:user:pass\nhttp://user:pass@host:port",
                     label_visibility="collapsed",
                 )
-                if proxy_text != st.session_state.rotating_proxies:
-                    st.session_state.rotating_proxies = proxy_text
-                    save_proxy_config(
-                        mode=proxy_mode,
-                        single_proxy=st.session_state.single_proxy,
-                        rotating_proxies=proxy_text,
-                        proxy_file_path=st.session_state.proxy_file_path,
-                    )
+                if proxy_text != st.session_state.cfg_rotating_proxies:
+                    st.session_state.cfg_rotating_proxies = proxy_text
+                    _persist_sidebar()
 
                 proxy_file_path = st.text_input(
                     "OR file path",
-                    value=st.session_state.proxy_file_path,
+                    value=st.session_state.cfg_proxy_file_path,
                     placeholder="/path/proxies.txt",
                 )
-                if proxy_file_path != st.session_state.proxy_file_path:
-                    st.session_state.proxy_file_path = proxy_file_path
-                    save_proxy_config(
-                        mode=proxy_mode,
-                        single_proxy=st.session_state.single_proxy,
-                        rotating_proxies=st.session_state.rotating_proxies,
-                        proxy_file_path=proxy_file_path,
-                    )
+                if proxy_file_path != st.session_state.cfg_proxy_file_path:
+                    st.session_state.cfg_proxy_file_path = proxy_file_path
+                    _persist_sidebar()
 
                 if proxy_text.strip():
                     proxy_list = parse_proxy_list(proxy_text)
@@ -974,39 +1008,52 @@ def main():
 """, unsafe_allow_html=True)
             enable_ai = st.toggle(
                 "Enable Ollama AI",
-                value=True,
+                value=st.session_state.cfg_enable_ai,
                 help="Uses local Ollama models (e.g. qwen2.5vl:7b) to filter junk, clean names, score lead viability, and generate custom pitch angles.",
             )
-            ollama_endpoint = DEFAULT_OLLAMA_ENDPOINT
-            ollama_model = DEFAULT_OLLAMA_MODEL
-            ai_filter_junk = True
-            ai_concurrency = 3
+            ollama_endpoint = st.session_state.cfg_ollama_endpoint
+            ollama_model = st.session_state.cfg_ollama_model
+            ai_filter_junk = st.session_state.cfg_ai_filter_junk
+            ai_concurrency = st.session_state.cfg_ai_concurrency
 
             if enable_ai:
                 ollama_endpoint = st.text_input(
                     "Endpoint",
-                    value=DEFAULT_OLLAMA_ENDPOINT,
+                    value=st.session_state.cfg_ollama_endpoint,
                     help="URL of your local or remote Ollama server instance",
                 )
                 is_online, avail_models, status_str = OllamaClient.check_connection_sync(ollama_endpoint)
                 if is_online:
                     st.caption(f"🟢 **Ollama:** {status_str}")
                     model_options = list(avail_models) if avail_models else [DEFAULT_OLLAMA_MODEL]
-                    if DEFAULT_OLLAMA_MODEL not in model_options:
-                        model_options.insert(0, DEFAULT_OLLAMA_MODEL)
+                    if st.session_state.cfg_ollama_model not in model_options:
+                        model_options.insert(0, st.session_state.cfg_ollama_model)
+                    sel_idx = model_options.index(st.session_state.cfg_ollama_model) if st.session_state.cfg_ollama_model in model_options else 0
                     ollama_model = st.selectbox(
                         "Model",
                         options=model_options,
-                        index=0,
+                        index=sel_idx,
                         help="Select from local Ollama models",
                     )
                 else:
                     st.caption(f"🔴 **Ollama:** {status_str}")
-                    ollama_model = st.text_input("Model Name", value=DEFAULT_OLLAMA_MODEL)
+                    ollama_model = st.text_input("Model Name", value=st.session_state.cfg_ollama_model)
 
                 c_ai1, c_ai2 = st.columns(2)
-                ai_filter_junk = c_ai1.checkbox("🗑️ Drop Junk", value=True, help="Automatically drop junk/spam listings")
-                ai_concurrency = c_ai2.number_input("AI Threads", min_value=1, max_value=8, value=3)
+                ai_filter_junk = c_ai1.checkbox("🗑️ Drop Junk", value=st.session_state.cfg_ai_filter_junk, help="Automatically drop junk/spam listings")
+                ai_concurrency = c_ai2.number_input("AI Threads", min_value=1, max_value=8, value=st.session_state.cfg_ai_concurrency)
+
+            if (enable_ai != st.session_state.cfg_enable_ai or
+                ollama_endpoint != st.session_state.cfg_ollama_endpoint or
+                ollama_model != st.session_state.cfg_ollama_model or
+                ai_filter_junk != st.session_state.cfg_ai_filter_junk or
+                ai_concurrency != st.session_state.cfg_ai_concurrency):
+                st.session_state.cfg_enable_ai = enable_ai
+                st.session_state.cfg_ollama_endpoint = ollama_endpoint
+                st.session_state.cfg_ollama_model = ollama_model
+                st.session_state.cfg_ai_filter_junk = ai_filter_junk
+                st.session_state.cfg_ai_concurrency = int(ai_concurrency)
+                _persist_sidebar()
 
         # Card 6: Bottom Cluster Telemetry HUD
         solver_status_color = "#10b981" if use_solver else "#64748b"

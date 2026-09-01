@@ -8,7 +8,7 @@ import secrets
 import string
 from typing import List, Optional, Tuple, Set, Dict, Any
 from urllib.parse import urlparse, parse_qs, unquote
-from src.config import JUNK_EMAIL_PATTERNS, SOCIAL_DOMAINS, PROXY_CONFIG_FILE
+from src.config import JUNK_EMAIL_PATTERNS, SOCIAL_DOMAINS, PROXY_CONFIG_FILE, SIDEBAR_CONFIG_FILE
 
 
 # RFC-5322 compatible regex for capturing email addresses
@@ -359,6 +359,48 @@ def save_proxy_config(mode: str, single_proxy: str = "", rotating_proxies: str =
         }
         with open(PROXY_CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+
+def load_saved_sidebar_config() -> Dict[str, Any]:
+    """Load persistent sidebar configuration from disk."""
+    default_config = {
+        "threads": 3,
+        "limit": 15,
+        "delay": 1.0,
+        "enrich": True,
+        "concurrency": 10,
+        "headless": True,
+        "use_solver": False,
+        "solver_ext": "captchasonic",
+        "proxy_mode": "Direct IP",
+        "single_proxy": "",
+        "rotating_proxies": "",
+        "proxy_file_path": "",
+        "enable_ai": True,
+        "ollama_endpoint": "http://localhost:11434",
+        "ollama_model": "qwen2.5vl:7b",
+        "ai_filter_junk": True,
+        "ai_concurrency": 3,
+    }
+    if not os.path.exists(SIDEBAR_CONFIG_FILE):
+        return default_config
+    try:
+        with open(SIDEBAR_CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            merged = dict(default_config)
+            merged.update(data)
+            return merged
+    except Exception:
+        return default_config
+
+
+def save_sidebar_config(config_dict: Dict[str, Any]) -> None:
+    """Save full sidebar configuration to disk."""
+    try:
+        with open(SIDEBAR_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config_dict, f, indent=2)
     except Exception:
         pass
 
