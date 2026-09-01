@@ -927,7 +927,7 @@ def main():
   <span style="font-size:0.62rem;background:rgba(99,102,241,0.15);color:#818cf8;padding:1px 5px;border-radius:4px;font-family:'JetBrains Mono',monospace;">PARALLEL</span>
 </div>
 """, unsafe_allow_html=True)
-            threads = st.slider("Workers (Threads)", 1, 10, value=st.session_state.cfg_threads,
+            threads = st.slider("Workers (Threads)", 1, 12, value=min(st.session_state.cfg_threads, 12),
                                 help="Concurrent browser processes running simultaneously.")
             limit   = st.slider("Leads per Query", 1, 100, value=st.session_state.cfg_limit)
             delay   = st.slider("Action Delay (s)", 0.5, 3.0, value=st.session_state.cfg_delay, step=0.1)
@@ -948,9 +948,9 @@ def main():
 """, unsafe_allow_html=True)
             enrich = st.toggle("Enrich Website Contacts", value=st.session_state.cfg_enrich)
             if enrich:
-                concurrency = st.slider("Enrichment Threads", 1, 30, value=st.session_state.cfg_concurrency)
+                concurrency = st.slider("Enrichment Threads", 1, 50, value=min(st.session_state.cfg_concurrency, 50))
             else:
-                concurrency = 10
+                concurrency = 20
             headless = st.toggle("Headless Stealth Mode", value=st.session_state.cfg_headless)
 
             if enrich != st.session_state.cfg_enrich or concurrency != st.session_state.cfg_concurrency or headless != st.session_state.cfg_headless:
@@ -1097,7 +1097,7 @@ def main():
 
                 c_ai1, c_ai2 = st.columns(2)
                 ai_filter_junk = c_ai1.checkbox("🗑️ Drop Junk", value=st.session_state.cfg_ai_filter_junk, help="Automatically drop junk/spam listings")
-                ai_concurrency = c_ai2.number_input("AI Threads", min_value=1, max_value=8, value=st.session_state.cfg_ai_concurrency)
+                ai_concurrency = c_ai2.number_input("AI Threads", min_value=1, max_value=16, value=min(st.session_state.cfg_ai_concurrency, 16), help="Parallel Ollama requests (optimal: 6 for RX 9060 XT)")
 
             if (enable_ai != st.session_state.cfg_enable_ai or
                 ollama_endpoint != st.session_state.cfg_ollama_endpoint or

@@ -366,11 +366,11 @@ def save_proxy_config(mode: str, single_proxy: str = "", rotating_proxies: str =
 def load_saved_sidebar_config() -> Dict[str, Any]:
     """Load persistent sidebar configuration from disk."""
     default_config = {
-        "threads": 3,
+        "threads": 4,
         "limit": 15,
         "delay": 1.0,
         "enrich": True,
-        "concurrency": 10,
+        "concurrency": 20,
         "headless": True,
         "use_solver": False,
         "solver_ext": "captchasonic",
@@ -382,7 +382,7 @@ def load_saved_sidebar_config() -> Dict[str, Any]:
         "ollama_endpoint": "http://localhost:11434",
         "ollama_model": "qwen2.5vl:7b",
         "ai_filter_junk": True,
-        "ai_concurrency": 3,
+        "ai_concurrency": 6,
     }
     if not os.path.exists(SIDEBAR_CONFIG_FILE):
         return default_config
