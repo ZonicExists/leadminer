@@ -1,0 +1,13 @@
+# Sample B2B Lead Generation Queries
+# Format: One search query per line
+
+Roofing Contractors in Miami, FL
+Dentists in Austin, TX
+Solar Panel Companies in Phoenix, AZ
+Digital Marketing Agencies in New York, NY
+HVAC Repair in Dallas, TX
+Accounting Firms in Chicago, IL
+Plumbers in Seattle, WA
+Real Estate Agencies in Los Angeles, CA
+Gyms and Fitness Studios in Denver, CO
+Lawyers in Boston, MA

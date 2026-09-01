@@ -1,0 +1,50 @@
+# CAPTCHA Extension binary assets (large font/woff files, keep the extension dirs)
+Bit Solver/extensions/captchasonic/assets/
+Bit Solver/extensions/nopecha/assets/
+
+# Proxy credential files — NEVER commit these
+.proxy_config.json
+proxies.txt
+*.proxies.txt
+
+__pycache__/
+*.py[cod]
+*.pyo
+.eggs/
+*.egg-info/
+dist/
+build/
+.env
+.venv/
+venv/
+env/
+
+# Streamlit
+.streamlit/
+
+# Playwright
+playwright/.auth/
+
+# Exported leads / outputs (user data, don't commit)
+exports/
+*.csv
+*.json
+!requirements*.json
+
+# Sensitive proxy config (contains credentials)
+.proxy_config.json
+
+# Temp / cache
+.pytest_cache/
+.cache/
+*.log
+*.tmp
+*.swp
+
+# Screenshots / debug artifacts
+*.png
+*.jpg
+
+# OS
+.DS_Store
+Thumbs.db
