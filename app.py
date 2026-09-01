@@ -1052,7 +1052,24 @@ def main():
                     proxy_list = load_proxies_from_file(proxy_file_path.strip())
 
                 if proxy_list:
-                    st.caption(f"💾 Saved: {len(proxy_list)} proxies → round-robin across {threads} workers")
+                    st.caption(f"💾 Loaded: {len(proxy_list)} proxies → round-robin across {threads} workers")
+                    if st.button("🧪 Test Proxy Connection", use_container_width=True):
+                        import urllib.request
+                        p_first = proxy_list[0]
+                        p_dict = parse_proxy_string(p_first)
+                        if p_dict:
+                            p_url = p_dict["server"]
+                            if p_dict.get("username"):
+                                user, pwd = p_dict["username"], p_dict.get("password", "")
+                                p_url = p_url.replace("://", f"://{user}:{pwd}@")
+                            try:
+                                h = urllib.request.ProxyHandler({"http": p_url, "https": p_url})
+                                op = urllib.request.build_opener(h)
+                                req = urllib.request.Request("https://api.ipify.org?format=json", headers={"User-Agent": "Mozilla/5.0"})
+                                res = op.open(req, timeout=6)
+                                st.success(f"🟢 Proxy Connected! Exit IP: {res.read().decode()[:40]}")
+                            except Exception as e:
+                                st.error(f"🔴 Proxy Error: {e}")
 
         # Card 5: Local Ollama AI Intelligence
         with st.container(border=True):

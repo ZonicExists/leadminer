@@ -589,8 +589,9 @@ class GoogleMapsScraper:
                     except Exception:
                         continue
 
-            except Exception:
-                pass
+            except Exception as e:
+                if not leads:
+                    raise e
             finally:
                 await context.close()
 
