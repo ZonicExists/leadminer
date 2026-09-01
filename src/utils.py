@@ -563,9 +563,11 @@ def filter_leads(
     require_social: bool = False,
     min_reviews: Optional[int] = None,
     max_reviews: Optional[int] = None,
+    exclude_junk: bool = False,
+    min_ai_score: Optional[int] = None,
 ) -> List[Any]:
     """
-    Filter leads based on website presence, contactability criteria, and review counts.
+    Filter leads based on website presence, contactability criteria, review counts, and AI intelligence.
 
     Args:
         leads:                   List of BusinessLead instances.
@@ -579,12 +581,24 @@ def filter_leads(
         require_social:          If True, must have at least one social media link.
         min_reviews:             If set, lead must have at least this number of reviews.
         max_reviews:             If set, lead must have at most this number of reviews.
+        exclude_junk:            If True, drop leads flagged as AI junk.
+        min_ai_score:            If set, lead must have an AI score >= min_ai_score.
 
     Returns:
         Filtered list of BusinessLead instances.
     """
     filtered = []
     for lead in leads:
+        # 0. AI Junk filter
+        if exclude_junk and getattr(lead, "ai_is_junk", False):
+            continue
+
+        # 0b. AI Score filter
+        if min_ai_score is not None:
+            lead_score = getattr(lead, "ai_lead_score", None)
+            if lead_score is not None and lead_score < min_ai_score:
+                continue
+
         # 1. Website filter
         if website_filter == "no_website" and getattr(lead, "has_website", False):
             continue

@@ -27,6 +27,7 @@ from src.utils import (
     parse_proxy_string,
 )
 from src.geo_expander import generate_sub_queries
+from src.ai_processor import OllamaClient, DEFAULT_OLLAMA_ENDPOINT, DEFAULT_OLLAMA_MODEL
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -963,10 +964,56 @@ def main():
                 if proxy_list:
                     st.caption(f"💾 Saved: {len(proxy_list)} proxies → round-robin across {threads} workers")
 
-        # Card 5: Bottom Cluster Telemetry HUD
+        # Card 5: Local Ollama AI Intelligence
+        with st.container(border=True):
+            st.markdown("""
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
+  <span style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#818cf8;">🧠 Ollama AI Intelligence</span>
+  <span style="font-size:0.62rem;background:rgba(99,102,241,0.15);color:#818cf8;padding:1px 5px;border-radius:4px;font-family:'JetBrains Mono',monospace;">LOCAL</span>
+</div>
+""", unsafe_allow_html=True)
+            enable_ai = st.toggle(
+                "Enable Ollama AI",
+                value=False,
+                help="Uses local Ollama models (e.g. qwen2.5vl:7b, qwen3.8:27b) to filter junk, clean names, score lead viability, and generate custom pitch angles.",
+            )
+            ollama_endpoint = DEFAULT_OLLAMA_ENDPOINT
+            ollama_model = DEFAULT_OLLAMA_MODEL
+            ai_filter_junk = True
+            ai_concurrency = 3
+
+            if enable_ai:
+                ollama_endpoint = st.text_input(
+                    "Endpoint",
+                    value=DEFAULT_OLLAMA_ENDPOINT,
+                    help="URL of your local or remote Ollama server instance",
+                )
+                is_online, avail_models, status_str = OllamaClient.check_connection_sync(ollama_endpoint)
+                if is_online:
+                    st.caption(f"🟢 **Ollama:** {status_str}")
+                    model_options = list(avail_models) if avail_models else [DEFAULT_OLLAMA_MODEL]
+                    if DEFAULT_OLLAMA_MODEL not in model_options:
+                        model_options.insert(0, DEFAULT_OLLAMA_MODEL)
+                    ollama_model = st.selectbox(
+                        "Model",
+                        options=model_options,
+                        index=0,
+                        help="Select from local Ollama models",
+                    )
+                else:
+                    st.caption(f"🔴 **Ollama:** {status_str}")
+                    ollama_model = st.text_input("Model Name", value=DEFAULT_OLLAMA_MODEL)
+
+                c_ai1, c_ai2 = st.columns(2)
+                ai_filter_junk = c_ai1.checkbox("🗑️ Drop Junk", value=True, help="Automatically drop junk/spam listings")
+                ai_concurrency = c_ai2.number_input("AI Threads", min_value=1, max_value=8, value=3)
+
+        # Card 6: Bottom Cluster Telemetry HUD
         solver_status_color = "#10b981" if use_solver else "#64748b"
         solver_status_text  = "Armed" if use_solver else "Disabled"
         proxy_count_display = f"{len(proxy_list)} IP{'s' if len(proxy_list) != 1 else ''}" if proxy_list else "Direct"
+        ai_hud_text = f"Ollama ({ollama_model[:12]})" if enable_ai else "Disabled"
+        ai_hud_color = "#10b981" if enable_ai else "#64748b"
 
         st.markdown(f"""
 <div style="background:rgba(10,10,18,0.7);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:0.75rem 0.85rem;margin-top:0.2rem;">
@@ -982,6 +1029,7 @@ def main():
     <div>Limit: <span style="color:#f8fafc;font-weight:600;">{limit}/q</span></div>
     <div>Proxies: <span style="color:#818cf8;font-weight:600;">{proxy_count_display}</span></div>
     <div>Solver: <span style="color:{solver_status_color};font-weight:600;">{solver_status_text}</span></div>
+    <div style="grid-column:1/-1;">AI Gen: <span style="color:{ai_hud_color};font-weight:600;">{ai_hud_text}</span></div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1266,6 +1314,37 @@ Split any city worldwide into postal zones or business districts to bypass Googl
             except Exception:
                 pass
 
+        # ── Ollama AI Lead Intelligence Phase ─────────────────────────────────
+        if enable_ai and unique_leads:
+            ai_bar  = st.progress(0.0, text=f"🤖 Analyzing leads with Ollama ({ollama_model})…")
+            ai_stat = st.empty()
+
+            def _ai_callback(lead: BusinessLead, done_c: int, total_c: int):
+                ai_bar.progress(
+                    min(done_c / max(total_c, 1), 1.0),
+                    text=f"🤖 AI analyzed {done_c}/{total_c} leads — {lead.ai_cleaned_name or lead.name}",
+                )
+                tag = "🗑️ [Junk]" if lead.ai_is_junk else f"⭐ [Score {lead.ai_lead_score or 'N/A'}/10]"
+                ai_stat.caption(f"Latest: **{lead.ai_cleaned_name or lead.name}** → `{tag}`: {lead.ai_pitch_angle or lead.ai_summary or ''}")
+
+            async def _run_ai_pipeline():
+                client = OllamaClient(
+                    endpoint=ollama_endpoint,
+                    model=ollama_model,
+                    concurrency=int(ai_concurrency),
+                )
+                return await client.process_leads_batch(
+                    unique_leads,
+                    progress_callback=_ai_callback,
+                    filter_junk=ai_filter_junk,
+                )
+
+            try:
+                unique_leads = asyncio.run(_run_ai_pipeline())
+                ai_bar.progress(1.0, text=f"✅ Ollama AI intelligence complete! ({len(unique_leads)} leads ready)")
+            except Exception as e:
+                st.error(f"Ollama AI processing error: {e}")
+
         st.session_state.leads = unique_leads
         st.session_state.running = False
         st.session_state.last_scrape_attempted = (len(unique_leads) == 0)
@@ -1394,7 +1473,12 @@ Split any city worldwide into postal zones or business districts to bypass Googl
             c_phone, c_email = st.columns(2)
             req_phone = c_phone.checkbox("📞 Phone Required", value=False)
             req_email = c_email.checkbox("✉️ Email Required", value=False)
-            min_rev_input = st.slider("⭐ Minimum Reviews", 0, 100, 0, help="Only show businesses with at least this many Google reviews")
+            
+            c_rev, c_ai = st.columns(2)
+            min_rev_input = c_rev.slider("💬 Min Reviews", 0, 100, 0, help="Only show businesses with at least this many Google reviews")
+            min_ai_input = c_ai.slider("⭐ Min AI Score", 0, 10, 0, help="Filter leads by Ollama AI viability score (1-10)")
+
+            exclude_ai_junk = st.checkbox("🗑️ Exclude AI-Flagged Junk", value=True, help="Hide spam, closed, or non-commercial listings")
 
         if "No Website Only" in web_mode:
             active_web_filter = "no_website"
@@ -1411,6 +1495,8 @@ Split any city worldwide into postal zones or business districts to bypass Googl
             require_phone=req_phone,
             require_email=req_email,
             min_reviews=min_rev_input if min_rev_input > 0 else None,
+            exclude_junk=exclude_ai_junk,
+            min_ai_score=min_ai_input if min_ai_input > 0 else None,
         )
 
         # 3D Interactive Telemetry Stat Cards
@@ -1421,6 +1507,14 @@ Split any city worldwide into postal zones or business districts to bypass Googl
         f_reviews = sum(l.review_count or 0 for l in filtered_leads)
         rated_leads = [l for l in filtered_leads if l.rating]
         avg_rating = round(sum(l.rating for l in rated_leads) / len(rated_leads), 1) if rated_leads else 0.0
+        ai_scored_leads = [l for l in filtered_leads if l.ai_lead_score]
+        avg_ai_score = round(sum(l.ai_lead_score for l in ai_scored_leads) / len(ai_scored_leads), 1) if ai_scored_leads else 0.0
+
+        ai_score_card = f"""
+  <div class="stat-box">
+    <div class="stat-box-label">🧠 Avg AI Score</div>
+    <div class="stat-box-num accent">{avg_ai_score}/10</div>
+  </div>""" if ai_scored_leads else ""
 
         st.markdown(f"""
 <div class="stat-card-grid">
@@ -1448,6 +1542,7 @@ Split any city worldwide into postal zones or business districts to bypass Googl
     <div class="stat-box-label">✉️ Email</div>
     <div class="stat-box-num">{f_email}</div>
   </div>
+{ai_score_card}
 </div>
 """, unsafe_allow_html=True)
 
@@ -1459,7 +1554,7 @@ Split any city worldwide into postal zones or business districts to bypass Googl
 
             all_cols = df.columns.tolist()
             default_cols = [
-                "Business Name", "Category", "Review Count", "Rating", "Has Website", "Phone", "Email",
+                "Business Name", "Category", "AI Lead Score", "AI Pitch Angle", "Review Count", "Rating", "Has Website", "Phone", "Email",
                 "Contact Channels", "City", "State", "Instagram", "Facebook", "LinkedIn"
             ]
             visible_cols = st.multiselect(

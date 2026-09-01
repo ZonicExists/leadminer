@@ -42,6 +42,15 @@ class BusinessLead(BaseModel):
     contact_page_url: Optional[str] = None
     enrichment_status: str = "pending"  # "enriched", "failed", "no_website", "skipped"
 
+    # Ollama AI Intelligence Data
+    ai_lead_score: Optional[int] = None  # 1 to 10 quality rating
+    ai_is_junk: bool = False  # True if AI flags this as spam / non-business / closed
+    ai_junk_reason: Optional[str] = None
+    ai_pitch_angle: Optional[str] = None  # Custom 1-sentence sales pitch angle
+    ai_summary: Optional[str] = None  # 1-sentence business summary
+    ai_cleaned_name: Optional[str] = None  # Keyword-stripped clean business name
+    ai_cleaned_category: Optional[str] = None
+
     @property
     def has_website(self) -> bool:
         """True if the business has a valid website URL."""
@@ -100,8 +109,14 @@ class BusinessLead(BaseModel):
     def to_flat_dict(self) -> Dict[str, Any]:
         """Convert lead into a flat dictionary suitable for CSV / Excel export."""
         return {
-            "Business Name": self.name,
-            "Category": self.category,
+            "Business Name": self.ai_cleaned_name or self.name,
+            "Original Name": self.name,
+            "Category": self.ai_cleaned_category or self.category,
+            "AI Lead Score": self.ai_lead_score,
+            "AI Pitch Angle": self.ai_pitch_angle or "",
+            "Is Junk": "Yes" if self.ai_is_junk else "No",
+            "Junk Reason": self.ai_junk_reason or "",
+            "AI Summary": self.ai_summary or "",
             "Has Website": "Yes" if self.has_website else "No",
             "Website": self.website or "",
             "Phone": self.phone or "",
