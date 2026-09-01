@@ -26,6 +26,9 @@ from src.utils import (
     save_proxy_config,
     load_saved_sidebar_config,
     save_sidebar_config,
+    save_session_checkpoint,
+    load_session_checkpoint,
+    clear_session_checkpoint,
     parse_proxy_string,
 )
 from src.geo_expander import generate_sub_queries
@@ -736,17 +739,47 @@ def run_pool_in_thread(
     solver_ext: str,
     lead_queue: Queue,
     result_queue: Queue,
+    stop_event: Optional[threading.Event] = None,
+    initial_leads: Optional[List[BusinessLead]] = None,
+    all_target_queries: Optional[List[str]] = None,
+    checkpoint_config: Optional[Dict[str, Any]] = None,
 ):
     async def _run():
         try:
-            all_leads: List[BusinessLead] = []
+            all_leads: List[BusinessLead] = list(initial_leads or [])
+            all_queries = list(all_target_queries or queries)
+            completed_queries: List[str] = [q for q in all_queries if q not in queries]
 
             def on_lead(lead: BusinessLead, worker_id: int):
                 all_leads.append(lead)
                 lead_queue.put(("lead", worker_id, lead))
+                # Periodic or per-lead checkpoint
+                pending = [q for q in all_queries if q not in completed_queries]
+                status_str = "paused" if (stop_event and stop_event.is_set()) else "running"
+                save_session_checkpoint(
+                    status=status_str,
+                    queries=all_queries,
+                    completed_queries=completed_queries,
+                    pending_queries=pending,
+                    leads=all_leads,
+                    config=checkpoint_config,
+                )
 
             def on_worker_done(result: WorkerResult):
+                if not result.error or "timeout" in (result.error or "").lower():
+                    if result.query not in completed_queries:
+                        completed_queries.append(result.query)
                 lead_queue.put(("worker_done", result.worker_id, result))
+                pending = [q for q in all_queries if q not in completed_queries]
+                status_str = "paused" if (stop_event and stop_event.is_set()) else "running"
+                save_session_checkpoint(
+                    status=status_str,
+                    queries=all_queries,
+                    completed_queries=completed_queries,
+                    pending_queries=pending,
+                    leads=all_leads,
+                    config=checkpoint_config,
+                )
 
             pool = ScraperPool(
                 threads=threads,
@@ -757,10 +790,33 @@ def run_pool_in_thread(
                 solver_ext=solver_ext,
                 lead_callback=on_lead,
                 worker_callback=on_worker_done,
+                stop_event=stop_event,
             )
             worker_results = await pool.run(queries=queries, limit_per_query=limit)
-            unique = deduplicate_leads(pool.get_all_leads(deduplicate=False))
-            result_queue.put(("done", unique, worker_results))
+            unique = deduplicate_leads(all_leads + pool.get_all_leads(deduplicate=False))
+
+            pending_final = [q for q in all_queries if q not in completed_queries]
+            if stop_event and stop_event.is_set():
+                save_session_checkpoint(
+                    status="paused",
+                    queries=all_queries,
+                    completed_queries=completed_queries,
+                    pending_queries=pending_final,
+                    leads=unique,
+                    config=checkpoint_config,
+                )
+                result_queue.put(("paused", unique, worker_results))
+            else:
+                save_session_checkpoint(
+                    status="completed",
+                    queries=all_queries,
+                    completed_queries=completed_queries,
+                    pending_queries=[],
+                    leads=unique,
+                    config=checkpoint_config,
+                )
+                result_queue.put(("done", unique, worker_results))
+
         except Exception as exc:
             import traceback
             traceback.print_exc()
@@ -1081,6 +1137,56 @@ def main():
 </div>
 """, unsafe_allow_html=True)
 
+    # ── Session State & Checkpoint Recovery ───────────────────────────────────
+    if "leads" not in st.session_state:
+        st.session_state.leads = []
+    if "running" not in st.session_state:
+        st.session_state.running = False
+    if "is_paused" not in st.session_state:
+        st.session_state.is_paused = False
+    if "resume_triggered" not in st.session_state:
+        st.session_state.resume_triggered = False
+
+    saved_session = load_session_checkpoint()
+    has_active_session = bool(
+        saved_session and
+        saved_session.get("status") in ["running", "paused"] and
+        (saved_session.get("leads") or saved_session.get("pending_queries"))
+    )
+
+    if has_active_session and not st.session_state.running:
+        status_tag = saved_session.get("status", "interrupted").upper()
+        n_leads = len(saved_session.get("leads", []))
+        n_pending = len(saved_session.get("pending_queries", []))
+        n_completed = len(saved_session.get("completed_queries", []))
+
+        with st.container(border=True):
+            st.markdown(f"""
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
+  <span style="font-size:0.82rem;font-weight:700;color:#f59e0b;letter-spacing:0.04em;">⚠️ RECOVERED SCRAPING SESSION ({status_tag})</span>
+  <span style="font-size:0.68rem;background:rgba(245,158,11,0.15);color:#f59e0b;padding:2px 8px;border-radius:6px;font-family:'JetBrains Mono',monospace;">{n_leads} LEADS PRESERVED</span>
+</div>
+<p style="font-size:0.78rem;color:#94a3b8;margin:0 0 0.6rem;">
+A previous scrape session was saved on disk (e.g. from a browser refresh, interruption, or pause). You can resume the remaining <b>{n_pending}</b> queries or keep the <b>{n_leads}</b> collected leads.
+</p>
+""", unsafe_allow_html=True)
+            rec_c1, rec_c2, rec_c3 = st.columns([1.2, 1.2, 1])
+            with rec_c1:
+                if n_pending > 0:
+                    if st.button(f"▶️ Resume Scraping ({n_pending} Queries)", type="primary", use_container_width=True):
+                        st.session_state.resume_triggered = True
+                        st.rerun()
+            with rec_c2:
+                if n_leads > 0:
+                    if st.button(f"✅ Keep {n_leads} Leads & Finish", use_container_width=True):
+                        st.session_state.leads = [BusinessLead(**d) for d in saved_session.get("leads", [])]
+                        clear_session_checkpoint()
+                        st.rerun()
+            with rec_c3:
+                if st.button("🗑️ Discard Session", use_container_width=True):
+                    clear_session_checkpoint()
+                    st.rerun()
+
     # ── Query Input Container ─────────────────────────────────────────────────
     with st.container(border=True):
         query_mode = st.segmented_control(
@@ -1223,48 +1329,75 @@ Split any city worldwide into postal zones or business districts to bypass Googl
         if start_btn and q_count == 0:
             st.warning("⚠️ Please enter a search query above before clicking Launch Scraper.")
 
-    # ── Session State ─────────────────────────────────────────────────────────
-    if "leads" not in st.session_state:
-        st.session_state.leads = []
-    if "running" not in st.session_state:
-        st.session_state.running = False
+    # ── Pipeline Execution (New Launch or Resume) ─────────────────────────────
+    is_resuming = st.session_state.get("resume_triggered", False)
+    if (start_btn or is_resuming) and not st.session_state.running:
+        if is_resuming:
+            st.session_state.resume_triggered = False
+            saved_sess = load_session_checkpoint() or {}
+            queries = saved_sess.get("pending_queries", [])
+            initial_leads = [BusinessLead(**d) for d in saved_sess.get("leads", [])]
+            all_target_queries = saved_sess.get("queries", []) or queries
+        else:
+            queries = active_queries
+            initial_leads = []
+            all_target_queries = list(queries)
 
-    # ── Pipeline Execution ────────────────────────────────────────────────────
-    if start_btn and not st.session_state.running:
-        queries = active_queries
         if not queries:
             st.warning("⚠️ Please enter or select at least one search query.")
             return
 
         st.session_state.running = True
-        st.session_state.leads   = []
+        st.session_state.leads = initial_leads
         st.session_state.last_scrape_attempted = False
+        st.session_state.is_paused = False
 
-        lead_queue:   Queue = Queue()
+        lead_queue: Queue = Queue()
         result_queue: Queue = Queue()
+        stop_event = threading.Event()
+        st.session_state.stop_event = stop_event
+
+        chk_cfg = {
+            "limit": limit,
+            "threads": threads,
+            "headless": headless,
+            "delay": delay,
+            "enrich": enrich,
+            "enable_ai": enable_ai,
+            "ollama_model": ollama_model,
+        }
 
         t = threading.Thread(
             target=run_pool_in_thread,
             args=(queries, limit, threads, headless, delay,
                   proxy_list, use_solver, solver_ext,
-                  lead_queue, result_queue),
+                  lead_queue, result_queue, stop_event,
+                  initial_leads, all_target_queries, chk_cfg),
             daemon=True,
         )
         t.start()
 
         # ── Live Progress Display ─────────────────────────────────────────────
-        section_header("Live Harvesting Telemetry")
+        col_hdr, col_stop = st.columns([3, 1])
+        with col_hdr:
+            section_header("Live Harvesting Telemetry")
+        with col_stop:
+            st.markdown("<div style='height:0.25rem'></div>", unsafe_allow_html=True)
+            if st.button("⏹️ Stop / Pause Scraper", type="secondary", use_container_width=True, help="Stop remaining queries and save current leads"):
+                stop_event.set()
 
         query_statuses = {q: st.empty() for q in queries}
         for q in queries:
             query_statuses[q].info(f"⏳ Queued in pool: **{q}**")
 
-        overall_bar  = st.progress(0.0, text="Initialising Playwright cluster…")
+        overall_bar = st.progress(0.0, text="Initialising Playwright cluster…")
         live_counter = st.empty()
-        total_found  = 0
+        total_found = len(initial_leads)
         workers_done = 0
 
-        live_raw_leads = []
+        live_raw_leads = list(initial_leads)
+        was_paused = False
+
         while True:
             try:
                 msg = lead_queue.get(timeout=0.3)
@@ -1286,7 +1419,7 @@ Split any city worldwide into postal zones or business districts to bypass Googl
                         help=f"Total raw records gathered across all workers: {total_found} (auto-deduplicated)",
                     )
                     overall_bar.progress(
-                        min(unique_count / max(limit * len(queries), 1), 0.95),
+                        min(unique_count / max(limit * len(all_target_queries), 1), 0.95),
                         text=f"Harvesting… {unique_count} unique leads ({total_found} raw collected)",
                     )
 
@@ -1295,9 +1428,13 @@ Split any city worldwide into postal zones or business districts to bypass Googl
                     workers_done += 1
                     q = result.query
                     proxy_tag = f" via `{result.proxy[:30]}…`" if result.proxy else ""
-                    if result.error:
+                    if result.error and "stop" not in result.error.lower():
                         query_statuses[q].error(
                             f"❌ **[Worker {wid}]** **{q}** — Error: {result.error[:60]}"
+                        )
+                    elif result.error:
+                        query_statuses[q].warning(
+                            f"⏹️ **[Worker {wid}]** **{q}** — Paused"
                         )
                     else:
                         query_statuses[q].success(
@@ -1310,11 +1447,14 @@ Split any city worldwide into postal zones or business districts to bypass Googl
 
             try:
                 done_msg = result_queue.get_nowait()
-                if done_msg[0] == "done":
+                msg_type = done_msg[0]
+                if msg_type in ["done", "paused"]:
                     _, unique_leads, worker_results = done_msg
-                    overall_bar.progress(1.0, text="✅ Scraping phase complete!")
+                    was_paused = (msg_type == "paused")
+                    tag_txt = "⏸️ Scraping paused" if was_paused else "✅ Scraping phase complete!"
+                    overall_bar.progress(1.0, text=tag_txt)
                     break
-                elif done_msg[0] == "error":
+                elif msg_type == "error":
                     _, unique_leads, worker_results = done_msg
                     overall_bar.progress(1.0, text="❌ Error during scraping")
                     break
@@ -1324,8 +1464,10 @@ Split any city worldwide into postal zones or business districts to bypass Googl
             if not t.is_alive():
                 try:
                     done_msg = result_queue.get(timeout=2)
-                    if done_msg[0] == "done":
+                    msg_type = done_msg[0]
+                    if msg_type in ["done", "paused"]:
                         _, unique_leads, worker_results = done_msg
+                        was_paused = (msg_type == "paused")
                     else:
                         unique_leads, worker_results = [], []
                 except Empty:
@@ -1395,7 +1537,11 @@ Split any city worldwide into postal zones or business districts to bypass Googl
         st.session_state.leads = unique_leads
         st.session_state.running = False
         st.session_state.last_scrape_attempted = (len(unique_leads) == 0)
-        st.session_state.last_scrape_queries = queries
+        st.session_state.last_scrape_queries = all_target_queries
+        st.session_state.is_paused = was_paused
+
+        if not was_paused:
+            clear_session_checkpoint()
         st.rerun()
 
     # ── If Idle: Show Feedback or 3D Interactive Bento Grid ───────────────────

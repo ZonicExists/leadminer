@@ -8,7 +8,7 @@ import secrets
 import string
 from typing import List, Optional, Tuple, Set, Dict, Any
 from urllib.parse import urlparse, parse_qs, unquote
-from src.config import JUNK_EMAIL_PATTERNS, SOCIAL_DOMAINS, PROXY_CONFIG_FILE, SIDEBAR_CONFIG_FILE
+from src.config import JUNK_EMAIL_PATTERNS, SOCIAL_DOMAINS, PROXY_CONFIG_FILE, SIDEBAR_CONFIG_FILE, SESSION_CHECKPOINT_FILE
 
 
 # RFC-5322 compatible regex for capturing email addresses
@@ -401,6 +401,64 @@ def save_sidebar_config(config_dict: Dict[str, Any]) -> None:
     try:
         with open(SIDEBAR_CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config_dict, f, indent=2)
+    except Exception:
+        pass
+
+
+def save_session_checkpoint(
+    status: str,
+    queries: List[str],
+    completed_queries: List[str],
+    pending_queries: List[str],
+    leads: List[Any],
+    config: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Save real-time scraping progress to disk so if the browser is refreshed,
+    interrupted, or stopped, progress and leads are 100% preserved.
+    """
+    try:
+        leads_dump = []
+        for l in leads:
+            if hasattr(l, "model_dump"):
+                leads_dump.append(l.model_dump())
+            elif isinstance(l, dict):
+                leads_dump.append(l)
+
+        payload = {
+            "status": status,  # 'running', 'paused', 'completed'
+            "queries": queries,
+            "completed_queries": completed_queries,
+            "pending_queries": pending_queries,
+            "lead_count": len(leads_dump),
+            "leads": leads_dump,
+            "config": config or {},
+        }
+        with open(SESSION_CHECKPOINT_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception:
+        pass
+
+
+def load_session_checkpoint() -> Optional[Dict[str, Any]]:
+    """
+    Load active session checkpoint from disk if one exists.
+    Returns parsed dictionary or None.
+    """
+    if not os.path.exists(SESSION_CHECKPOINT_FILE):
+        return None
+    try:
+        with open(SESSION_CHECKPOINT_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def clear_session_checkpoint() -> None:
+    """Clear active session checkpoint file."""
+    try:
+        if os.path.exists(SESSION_CHECKPOINT_FILE):
+            os.remove(SESSION_CHECKPOINT_FILE)
     except Exception:
         pass
 

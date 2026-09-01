@@ -255,9 +255,10 @@ class GoogleMapsScraper:
         query: str,
         limit: int = 20,
         lead_callback: Optional[Callable[[BusinessLead], None]] = None,
+        stop_event: Optional[threading.Event] = None,
     ) -> List[BusinessLead]:
         """
-        Scrape Google Maps for a given search query with proxy and CAPTCHA support.
+        Scrape Google Maps for a given search query with proxy, CAPTCHA, and cooperative cancellation support.
         
         Args:
             query: Search query (e.g. "Roofers in Miami, FL")
@@ -375,6 +376,9 @@ class GoogleMapsScraper:
                 max_scroll_attempts = 40
 
                 while scroll_attempts < max_scroll_attempts:
+                    if stop_event and stop_event.is_set():
+                        break
+
                     current_links = await page.locator('div[role="feed"] a[href*="/maps/place/"]').all()
                     for link in current_links:
                         try:
@@ -408,6 +412,8 @@ class GoogleMapsScraper:
                     feed_cards = await page.locator('div[role="feed"] a[href*="/maps/place/"]').all()
 
                 for card in feed_cards:
+                    if stop_event and stop_event.is_set():
+                        break
                     try:
                         # Determine if card is an <a> tag itself or contains one
                         tag_name = await card.evaluate("el => el.tagName.toLowerCase()")

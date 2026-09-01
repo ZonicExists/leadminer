@@ -66,6 +66,7 @@ class ScraperPool:
         solver_path: Optional[str] = None,
         lead_callback: Optional[Callable[[BusinessLead, int], None]] = None,
         worker_callback: Optional[Callable[[WorkerResult], None]] = None,
+        stop_event: Optional[threading.Event] = None,
     ):
         self.threads = max(1, threads)
         self.headless = headless
@@ -75,6 +76,7 @@ class ScraperPool:
         self.solver_path = solver_path
         self.lead_callback = lead_callback
         self.worker_callback = worker_callback
+        self.stop_event = stop_event
 
         # Build unified proxy pool
         self.proxy_manager = ProxyManager()
@@ -107,7 +109,7 @@ class ScraperPool:
         proxy_str: Optional[str],
         semaphore: asyncio.Semaphore,
     ) -> WorkerResult:
-        """Execute one scraping job in a semaphore-limited worker."""
+        """Execute one scraping job in a semaphore-limited worker with stop token checking."""
         result = WorkerResult(
             query=query,
             worker_id=worker_id,
@@ -115,11 +117,23 @@ class ScraperPool:
             started_at=datetime.now(),
         )
 
+        if self.stop_event and self.stop_event.is_set():
+            result.error = "Stopped by user"
+            result.finished_at = datetime.now()
+            return result
+
         async with semaphore:
+            if self.stop_event and self.stop_event.is_set():
+                result.error = "Stopped by user"
+                result.finished_at = datetime.now()
+                return result
+
             try:
                 scraper = self._build_worker_scraper(proxy_str)
 
                 async def on_lead(lead: BusinessLead):
+                    if self.stop_event and self.stop_event.is_set():
+                        return
                     lead.search_query = query
                     result.leads.append(lead)
                     async with self._lock:
@@ -139,6 +153,7 @@ class ScraperPool:
                             query=query,
                             limit=limit,
                             lead_callback=on_lead,
+                            stop_event=self.stop_event,
                         ),
                         timeout=50.0,
                     )

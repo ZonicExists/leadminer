@@ -8,6 +8,7 @@ CAPTCHASONIC_EXT_PATH = os.path.join(EXTENSIONS_DIR, "captchasonic")
 NOPECHA_EXT_PATH = os.path.join(EXTENSIONS_DIR, "nopecha")
 PROXY_CONFIG_FILE = os.path.join(BASE_DIR, ".proxy_config.json")
 SIDEBAR_CONFIG_FILE = os.path.join(BASE_DIR, ".sidebar_config.json")
+SESSION_CHECKPOINT_FILE = os.path.join(BASE_DIR, ".scrape_session_checkpoint.json")
 
 DEFAULT_USER_AGENTS: List[str] = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
