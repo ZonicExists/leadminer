@@ -264,6 +264,8 @@ class GoogleMapsScraper:
             "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
+            "--disable-quic",
+            "--ignore-certificate-errors",
         ]
 
         # Build the Maps URL early so we can pass it to the captcha handler
@@ -307,8 +309,30 @@ class GoogleMapsScraper:
 
             page.set_default_timeout(DEFAULT_TIMEOUT_MS)
 
+            # Fast asset blocking: drop images, fonts, and media so residential proxies do not time out
+            async def _block_heavy_assets(route):
+                if route.request.resource_type in ["image", "font", "media"]:
+                    try:
+                        await route.abort()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        await route.continue_()
+                    except Exception:
+                        pass
+
             try:
-                await page.goto(maps_url, wait_until="domcontentloaded")
+                await page.route("**/*", _block_heavy_assets)
+            except Exception:
+                pass
+
+            try:
+                try:
+                    await page.goto(maps_url, wait_until="commit", timeout=DEFAULT_TIMEOUT_MS)
+                except Exception:
+                    await page.goto(maps_url, wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
+
                 await self._dismiss_consent(page)
                 # Pass the target URL so the handler can navigate back after solving
                 solved = await self._handle_captcha_if_present(page, original_url=maps_url)
@@ -316,13 +340,12 @@ class GoogleMapsScraper:
                     # If CAPTCHA timed out, abort this query cleanly
                     await context.close()
                     return leads
-                await page.wait_for_timeout(2500)
-
+                await page.wait_for_timeout(1500)
 
                 # Find the feed container
                 feed_selector = 'div[role="feed"]'
                 try:
-                    await page.wait_for_selector(feed_selector, timeout=8000)
+                    await page.wait_for_selector(feed_selector, timeout=12000)
                 except Exception:
                     if await page.locator('h1').first.is_visible(timeout=3000):
                         single_lead = BusinessLead(search_query=query, google_maps_url=page.url)

@@ -4,6 +4,8 @@ Utility helper functions for data parsing, URL cleansing, coordinates extraction
 import json
 import os
 import re
+import secrets
+import string
 from typing import List, Optional, Tuple, Set, Dict, Any
 from urllib.parse import urlparse, parse_qs, unquote
 from src.config import JUNK_EMAIL_PATTERNS, SOCIAL_DOMAINS, PROXY_CONFIG_FILE
@@ -370,8 +372,29 @@ def load_proxies_from_file(filepath: str) -> List[str]:
     return proxies
 
 
+def refresh_proxy_session(proxy_dict: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    If a proxy has a residential session-based username (e.g., mucasp14nztsykr-session-XXXXX-lifetime-5),
+    generate a fresh random session ID so the proxy session never expires or throttles across workers.
+    """
+    if not proxy_dict or "username" not in proxy_dict:
+        return proxy_dict
+
+    username = proxy_dict.get("username") or ""
+    # Check for session pattern: -session-<id> or _session_<id>
+    if "-session-" in username or "_session_" in username:
+        rand_id = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(10))
+        new_username = re.sub(r"(-session-)[a-zA-Z0-9]+", rf"\g<1>{rand_id}", username, count=1)
+        new_username = re.sub(r"(_session_)[a-zA-Z0-9]+", rf"\g<1>{rand_id}", new_username, count=1)
+        res = dict(proxy_dict)
+        res["username"] = new_username
+        return res
+
+    return proxy_dict
+
+
 class ProxyManager:
-    """Manages proxy rotation across requests."""
+    """Manages proxy rotation across requests with dynamic residential session support."""
     def __init__(self, proxies: Optional[List[str]] = None):
         self.proxies = proxies or []
         self._index = 0
@@ -381,20 +404,27 @@ class ProxyManager:
             if p and p not in self.proxies:
                 self.proxies.append(p)
 
-    def get_next_proxy(self) -> Optional[Dict[str, Any]]:
-        """Get the next proxy in round-robin sequence."""
+    def get_next_proxy(self, rotate_session: bool = True) -> Optional[Dict[str, Any]]:
+        """Get the next proxy in round-robin sequence with dynamic session rotation."""
         if not self.proxies:
             return None
         proxy_str = self.proxies[self._index % len(self.proxies)]
         self._index += 1
-        return parse_proxy_string(proxy_str)
+        parsed = parse_proxy_string(proxy_str)
+        if rotate_session and parsed:
+            return refresh_proxy_session(parsed)
+        return parsed
 
-    def get_next_proxy_str(self) -> Optional[str]:
+    def get_next_proxy_str(self, rotate_session: bool = True) -> Optional[str]:
         """Get the raw proxy string in round-robin sequence."""
         if not self.proxies:
             return None
         proxy_str = self.proxies[self._index % len(self.proxies)]
         self._index += 1
+        if rotate_session and ("-session-" in proxy_str or "_session_" in proxy_str):
+            parsed = refresh_proxy_session(parse_proxy_string(proxy_str))
+            if parsed and parsed.get("username"):
+                return to_proxy_url(f"{parsed['server'].replace('http://','')}:{parsed['username']}:{parsed.get('password','')}")
         return proxy_str
 
     def __len__(self):
