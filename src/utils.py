@@ -98,17 +98,19 @@ def parse_review_count(text: Optional[str]) -> Optional[int]:
       - "142 reviews" or "1 review" or "1,240 Reviews"
       - "2.5K reviews" or "1.2k"
       - "4.8 stars 95 reviews"
-      - Raw digits "95"
+      - Raw isolated review digits like "95" or "1,240"
     """
     if not text:
         return None
     text = text.strip()
 
     # 1. Match "1.4K reviews" or "2.5k"
-    k_match = re.search(r"([\d.]+)\s*[kK]\b", text)
+    k_match = re.search(r"([\d.]+)\s*[kK]\s*(?:reviews?|ratings?|bewertungen|avis)?\b", text, re.IGNORECASE)
     if k_match:
         try:
-            return int(float(k_match.group(1)) * 1000)
+            val = int(float(k_match.group(1)) * 1000)
+            if val < 10_000_000:
+                return val
         except ValueError:
             pass
 
@@ -116,20 +118,22 @@ def parse_review_count(text: Optional[str]) -> Optional[int]:
     paren_match = re.search(r"\(([\d,]+)\)", text)
     if paren_match:
         digits = paren_match.group(1).replace(",", "")
-        if digits.isdigit():
+        if digits.isdigit() and int(digits) < 10_000_000:
             return int(digits)
 
-    # 3. Match "1,234 reviews" or "12 reviews" or "1 review"
-    word_match = re.search(r"([\d,]+)\s+reviews?", text, re.IGNORECASE)
+    # 3. Match "1,234 reviews" or "12 reviews" or "1 review" or "4.8 stars 95 reviews"
+    word_match = re.search(r"([\d,]+)\s+(?:reviews?|ratings?|bewertungen|avis|reseñas|recensioni)\b", text, re.IGNORECASE)
     if word_match:
         digits = word_match.group(1).replace(",", "")
-        if digits.isdigit():
+        if digits.isdigit() and int(digits) < 10_000_000:
             return int(digits)
 
-    # 4. Check if string contains clean digits
-    clean = re.sub(r"[^\d]", "", text)
-    if clean and clean.isdigit():
-        return int(clean)
+    # 4. If the string is short and isolated digits (e.g. dedicated review badge)
+    clean_isolated = text.replace(",", "").strip()
+    if clean_isolated.isdigit() and len(clean_isolated) <= 6:
+        val = int(clean_isolated)
+        if 0 <= val <= 2_000_000:
+            return val
 
     return None
 
