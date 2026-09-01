@@ -19,7 +19,7 @@ from src.models import BusinessLead
 logger = logging.getLogger(__name__)
 
 DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "bit:latest"
+DEFAULT_OLLAMA_MODEL = "qwen2.5vl:7b"
 
 
 class OllamaClient:
@@ -29,7 +29,7 @@ class OllamaClient:
         self,
         endpoint: str = DEFAULT_OLLAMA_ENDPOINT,
         model: str = DEFAULT_OLLAMA_MODEL,
-        timeout_sec: int = 90,
+        timeout_sec: int = 45,
         concurrency: int = 3,
     ):
         self.endpoint = endpoint.rstrip("/")
