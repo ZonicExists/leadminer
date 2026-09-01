@@ -185,6 +185,62 @@ class GoogleMapsScraper:
         print(f"  [CAPTCHA] ⚠️  Timed out after {max_wait_sec}s — skipping page.")
         return False
 
+    def _prepare_solver_extension(self, temp_user_data: str) -> Optional[str]:
+        """
+        Copy the selected CAPTCHA solver extension into a temp directory,
+        inject the API key from Bit Solver's config.json, and return the
+        path to the copied extension (or None if setup fails).
+        """
+        src_ext_path = self._resolve_solver_extension_path()
+        if not src_ext_path or not os.path.isdir(src_ext_path):
+            return None
+
+        try:
+            # Copy extension to a temp dir so multiple workers don't share state
+            ext_name = os.path.basename(src_ext_path)
+            dest_ext_path = os.path.join(temp_user_data, ext_name)
+            shutil.copytree(src_ext_path, dest_ext_path, dirs_exist_ok=True)
+
+            # Read API key from Bit Solver config
+            api_key = ""
+            if os.path.isfile(_BIT_SOLVER_CONFIG):
+                try:
+                    with open(_BIT_SOLVER_CONFIG, "r", encoding="utf-8") as f:
+                        solver_cfg = json.load(f)
+                        api_key = solver_cfg.get("apiKey", "") or solver_cfg.get("api_key", "")
+                except Exception:
+                    pass
+
+            # Inject the API key into the extension's own config if present
+            if api_key:
+                if self.solver_ext.lower() == "captchasonic":
+                    ext_config_path = os.path.join(dest_ext_path, "config", "defaultConfig.json")
+                    if os.path.isfile(ext_config_path):
+                        try:
+                            with open(ext_config_path, "r", encoding="utf-8") as f:
+                                ext_cfg = json.load(f)
+                            ext_cfg["apiKey"] = api_key
+                            with open(ext_config_path, "w", encoding="utf-8") as f:
+                                json.dump(ext_cfg, f, indent=2)
+                        except Exception:
+                            pass
+                elif self.solver_ext.lower() == "nopecha":
+                    manifest_path = os.path.join(dest_ext_path, "manifest.json")
+                    settings_path = os.path.join(dest_ext_path, "settings.json")
+                    if os.path.isfile(settings_path):
+                        try:
+                            with open(settings_path, "r", encoding="utf-8") as f:
+                                settings = json.load(f)
+                            settings["key"] = api_key
+                            with open(settings_path, "w", encoding="utf-8") as f:
+                                json.dump(settings, f, indent=2)
+                        except Exception:
+                            pass
+
+            return dest_ext_path
+        except Exception:
+            return None
+
     async def scrape_query(
         self,
         query: str,
