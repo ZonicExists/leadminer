@@ -435,29 +435,120 @@ class ProxyManager:
         return len(self.proxies)
 
 
+def extract_place_cid(maps_url: Optional[str]) -> Optional[str]:
+    """Extract unique hex Place CID (!1s0x...:0x...) from Google Maps URL if present."""
+    if not maps_url:
+        return None
+    match = re.search(r"!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)", maps_url)
+    return match.group(1).lower() if match else None
+
+
+def get_lead_dedup_keys(lead: Any) -> List[str]:
+    """
+    Generate all possible unique identification keys for a lead.
+    Matches across Place ID, CID, Phone, Name+Location, and Website.
+    """
+    keys = []
+    
+    # 1. Place ID
+    if getattr(lead, "place_id", None):
+        keys.append(f"place_id:{str(lead.place_id).strip()}")
+
+    # 2. Hex CID from Maps URL
+    maps_url = getattr(lead, "google_maps_url", "") or ""
+    cid = extract_place_cid(maps_url)
+    if cid:
+        keys.append(f"cid:{cid}")
+
+    # 3. Cleaned Phone Number (if at least 7 digits)
+    phone = getattr(lead, "phone", None)
+    if phone:
+        clean_p = re.sub(r"\D", "", phone)
+        if len(clean_p) >= 7:
+            keys.append(f"phone:{clean_p}")
+
+    # 4. Normalized Place Name + Location
+    name = (getattr(lead, "name", "") or "").strip().lower()
+    name_clean = re.sub(r"[^\w\s]", "", name)
+    
+    city = (getattr(lead, "city", "") or getattr(lead, "state", "") or "").strip().lower()
+    addr = (getattr(lead, "address", "") or "").strip().lower()
+    
+    if name_clean:
+        if city:
+            keys.append(f"name_loc:{name_clean}:{city}")
+        elif addr:
+            first_addr = addr.split(",")[0].strip()
+            keys.append(f"name_loc:{name_clean}:{first_addr}")
+        else:
+            keys.append(f"name:{name_clean}")
+
+    # 5. Root Website Domain
+    website = getattr(lead, "website", None)
+    if website and "google.com" not in website.lower():
+        try:
+            parsed_w = urlparse(website)
+            domain = parsed_w.netloc.lower().replace("www.", "")
+            if domain and len(domain) >= 4:
+                keys.append(f"domain:{domain}")
+        except Exception:
+            pass
+
+    return keys
+
+
+def merge_lead_attributes(target: Any, source: Any) -> None:
+    """Merge attributes from duplicate `source` lead into `target` lead if missing."""
+    for field in [
+        "phone", "website", "rating", "review_count", "category",
+        "address", "street", "city", "state", "postal_code", "country",
+        "price_level", "latitude", "longitude", "primary_email",
+        "linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok",
+        "contact_page_url", "place_id", "google_maps_url"
+    ]:
+        curr_val = getattr(target, field, None)
+        src_val = getattr(source, field, None)
+        if (curr_val is None or curr_val == "") and (src_val is not None and src_val != ""):
+            setattr(target, field, src_val)
+
+    # Merge emails list
+    target_emails = getattr(target, "emails", []) or []
+    source_emails = getattr(source, "emails", []) or []
+    if source_emails:
+        combined_emails = list(dict.fromkeys(target_emails + source_emails))
+        setattr(target, "emails", combined_emails)
+
+
 def deduplicate_leads(leads: List[Any]) -> List[Any]:
-    """Deduplicate a list of leads based on unique identifiers (Place ID, Maps URL, Phone, or Name+Address)."""
-    unique_leads = []
-    seen_identifiers: Set[str] = set()
+    """
+    Deduplicate a list of leads using multi-signal identification and smart merging.
+    Merges contact information across duplicate sightings so no data is lost.
+    """
+    unique_leads: List[Any] = []
+    key_to_lead_index: Dict[str, int] = {}
 
     for lead in leads:
-        # Build composite identifier
-        identifier = None
-        if lead.place_id:
-            identifier = f"place_id:{lead.place_id}"
-        elif lead.google_maps_url:
-            identifier = f"maps_url:{lead.google_maps_url}"
-        elif lead.phone:
-            clean_p = re.sub(r"\D", "", lead.phone)
-            if len(clean_p) >= 7:
-                identifier = f"phone:{clean_p}"
+        lead_keys = get_lead_dedup_keys(lead)
+        existing_idx = None
         
-        if not identifier:
-            identifier = f"name_addr:{(lead.name or '').strip().lower()}:{(lead.address or '').strip().lower()}"
+        # Check if any key matches an existing unique lead
+        for k in lead_keys:
+            if k in key_to_lead_index:
+                existing_idx = key_to_lead_index[k]
+                break
 
-        if identifier not in seen_identifiers:
-            seen_identifiers.add(identifier)
+        if existing_idx is not None:
+            # Duplicate found -> Merge missing fields into existing lead
+            existing_lead = unique_leads[existing_idx]
+            merge_lead_attributes(existing_lead, lead)
+            for k in lead_keys:
+                key_to_lead_index[k] = existing_idx
+        else:
+            # New unique lead
+            new_idx = len(unique_leads)
             unique_leads.append(lead)
+            for k in lead_keys:
+                key_to_lead_index[k] = new_idx
 
     return unique_leads
 

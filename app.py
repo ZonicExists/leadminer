@@ -1169,6 +1169,7 @@ Split any city worldwide into postal zones or business districts to bypass Googl
         total_found  = 0
         workers_done = 0
 
+        live_raw_leads = []
         while True:
             try:
                 msg = lead_queue.get(timeout=0.3)
@@ -1177,15 +1178,21 @@ Split any city worldwide into postal zones or business districts to bypass Googl
                 if kind == "lead":
                     _, wid, lead = msg
                     total_found += 1
+                    live_raw_leads.append(lead)
+                    unique_count = len(deduplicate_leads(live_raw_leads))
                     q = lead.search_query
                     if q in query_statuses:
                         query_statuses[q].info(
                             f"🔄 **[Worker {wid}]** Scraping **{q}** — Latest: *{lead.name}*"
                         )
-                    live_counter.metric("Total Leads Captured", total_found)
+                    live_counter.metric(
+                        "Unique Leads Captured",
+                        unique_count,
+                        help=f"Total raw records gathered across all workers: {total_found} (auto-deduplicated)",
+                    )
                     overall_bar.progress(
-                        min(total_found / max(limit * len(queries), 1), 0.95),
-                        text=f"Harvesting… {total_found} leads collected",
+                        min(unique_count / max(limit * len(queries), 1), 0.95),
+                        text=f"Harvesting… {unique_count} unique leads ({total_found} raw collected)",
                     )
 
                 elif kind == "worker_done":
