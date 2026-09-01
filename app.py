@@ -974,8 +974,8 @@ def main():
 """, unsafe_allow_html=True)
             enable_ai = st.toggle(
                 "Enable Ollama AI",
-                value=False,
-                help="Uses local Ollama models (e.g. qwen2.5vl:7b, qwen3.8:27b) to filter junk, clean names, score lead viability, and generate custom pitch angles.",
+                value=True,
+                help="Uses local Ollama models (e.g. qwen2.5vl:7b) to filter junk, clean names, score lead viability, and generate custom pitch angles.",
             )
             ollama_endpoint = DEFAULT_OLLAMA_ENDPOINT
             ollama_model = DEFAULT_OLLAMA_MODEL
@@ -1445,6 +1445,31 @@ Split any city worldwide into postal zones or business districts to bypass Googl
         has_web_raw  = sum(1 for l in unique_leads if l.has_website)
 
         section_header("🎯 Lead Intelligence & Web Builder Mode")
+
+        # 1-Click AI trigger for current harvested leads
+        col_ai_btn, col_ai_info = st.columns([1, 2])
+        with col_ai_btn:
+            if st.button("🤖 Run Ollama AI on Current Leads", use_container_width=True, help=f"Analyze & filter these leads with {ollama_model}"):
+                ai_prog = st.progress(0.0, text=f"🤖 Analyzing {len(unique_leads)} leads with Ollama ({ollama_model})…")
+                
+                def _manual_ai_cb(l, done_c, tot_c):
+                    ai_prog.progress(min(done_c / max(tot_c, 1), 1.0), text=f"AI Analyzed {done_c}/{tot_c} leads…")
+
+                async def _run_manual_ai():
+                    c = OllamaClient(endpoint=ollama_endpoint, model=ollama_model, concurrency=int(ai_concurrency))
+                    return await c.process_leads_batch(unique_leads, progress_callback=_manual_ai_cb, filter_junk=ai_filter_junk)
+
+                with st.spinner(f"Analyzing leads with Ollama ({ollama_model})..."):
+                    updated = asyncio.run(_run_manual_ai())
+                    st.session_state.leads = updated
+                    st.rerun()
+
+        with col_ai_info:
+            ai_analyzed_count = sum(1 for l in unique_leads if l.ai_lead_score is not None)
+            if ai_analyzed_count > 0:
+                st.caption(f"✨ **AI Status:** {ai_analyzed_count}/{total_raw} leads analyzed & scored with `{ollama_model}`")
+            else:
+                st.caption(f"💡 Leads not AI-analyzed yet. Click **Run Ollama AI on Current Leads** to analyze now.")
 
         filter_col1, filter_col2 = st.columns([1, 1])
         with filter_col1:
