@@ -1664,6 +1664,9 @@ Split any city worldwide into postal zones or business districts to bypass Googl
             else:
                 st.caption(f"💡 Leads not AI-analyzed yet. Click **Run Ollama AI on Current Leads** to analyze now.")
 
+        # Smart default: if there are no-website leads, highlight them; otherwise default to All Leads (1)
+        default_web_idx = 0 if no_web_raw > 0 else 1
+
         filter_col1, filter_col2 = st.columns([1, 1])
         with filter_col1:
             web_mode = st.radio(
@@ -1673,14 +1676,14 @@ Split any city worldwide into postal zones or business districts to bypass Googl
                     f"📋 All Scraped Leads ({total_raw})",
                     f"🌐 Has Website ({has_web_raw})",
                 ],
-                index=0,
+                index=default_web_idx,
             )
 
         with filter_col2:
             st.markdown("""<p style="font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#64748b;margin-bottom:0.4rem;">Contact Channel Quality</p>""", unsafe_allow_html=True)
             req_contact = st.checkbox(
                 "✅ At least 1 Contact (Phone or Email) OR 1 Social Media Handle",
-                value=True,
+                value=False,
                 help="Drops uncontactable leads that have no phone, email, or social profiles.",
             )
             req_phone_email = st.checkbox(
@@ -1716,6 +1719,12 @@ Split any city worldwide into postal zones or business districts to bypass Googl
             exclude_junk=exclude_ai_junk,
             min_ai_score=min_ai_input if min_ai_input > 0 else None,
         )
+
+        if not filtered_leads and total_raw > 0:
+            st.info(
+                f"💡 **{total_raw} leads** were captured, but your active filters hid all of them.\n\n"
+                f"• Select **'📋 All Scraped Leads ({total_raw})'** or adjust your filters above to see them."
+            )
 
         # 3D Interactive Telemetry Stat Cards
         f_total   = len(filtered_leads)
